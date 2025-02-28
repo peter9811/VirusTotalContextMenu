@@ -45,7 +45,7 @@ namespace VirusTotalContextMenu
             {
                 try
                 {
-                    await VirusScanFile(args[0]);
+                    await VirusScanFile(args);
                 }
                 catch (Exception e)
                 {
@@ -69,7 +69,7 @@ namespace VirusTotalContextMenu
         private static void WriteError(string error) => MessageBox.Show(error, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
         private static void WriteSuccess(string message) => MessageBox.Show(message, "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
 
-        private static async Task VirusScanFile(string filePath)
+        private static async Task VirusScanFile(string[] filePaths)
         {
             string path = Path.Combine(Path.GetDirectoryName(Environment.ProcessPath)!, "appsettings.json");
 
@@ -85,48 +85,51 @@ namespace VirusTotalContextMenu
             using VirusTotal virusTotal = new VirusTotal(key);
             virusTotal.UseTLS = true;
 
-            FileInfo info = new FileInfo(filePath);
-
-            if (!info.Exists)
-                return;
-
-            // Check if the file has been scanned before.
-            FileReport? report = await virusTotal.GetFileReportAsync(info);
-
-            if (report == null || report.ResponseCode != FileReportResponseCode.Present)
+            foreach (string filePath in filePaths)
             {
-                try
-                {
-                    ScanResult result = await virusTotal.ScanFileAsync(info);
+                FileInfo info = new FileInfo(filePath);
 
-                    if (result.Permalink.Length < 66)
+                if (!info.Exists)
+                    continue;
+
+                // Check if the file has been scanned before.
+                FileReport? report = await virusTotal.GetFileReportAsync(info);
+
+                if (report == null || report.ResponseCode != FileReportResponseCode.Present)
+                {
+                    try
                     {
-                        WriteError($"Invalid scan ID received from VirusTotal: {result.Permalink}");
-                        return;
-                    }
+                        ScanResult result = await virusTotal.ScanFileAsync(info);
 
-                    string sha256 = result.Permalink.Substring(2, 64);
-                    OpenUrl($"https://www.virustotal.com/gui/file/{sha256}/detection/{result.Permalink}", "File new to VirusTotal. Open in browser?");
+                        if (result.Permalink.Length < 66)
+                        {
+                            WriteError($"Invalid scan ID received from VirusTotal: {result.Permalink}");
+                            return;
+                        }
+
+                        string sha256 = result.Permalink.Substring(2, 64);
+                        OpenUrl($"https://www.virustotal.com/gui/file/{sha256}/detection/{result.Permalink}", "File new to VirusTotal. Open in browser?");
+                    }
+                    catch (RateLimitException)
+                    {
+                        MessageBox.Show("Virus Total limits the number of calls you can make to 4 calls each 60 seconds.", "Rate Exceeded", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    }
+                    catch (SizeLimitException)
+                    {
+                        MessageBox.Show("Virus Total limits the filesize to 32 MB.", "Size Limitation", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    }
+                    catch (Exception e)
+                    {
+                        WriteError($"Unknown error happened: {e.Message}");
+                    }
                 }
-                catch (RateLimitException)
-                {
-                    MessageBox.Show("Virus Total limits the number of calls you can make to 4 calls each 60 seconds.", "Rate Exceeded", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                }
-                catch (SizeLimitException)
-                {
-                    MessageBox.Show("Virus Total limits the filesize to 32 MB.", "Size Limitation", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                }
-                catch (Exception e)
-                {
-                    WriteError($"Unknown error happened: {e.Message}");
-                }
-            }
-            else
-            {
-                if (string.IsNullOrEmpty(report.Permalink))
-                    WriteError("No permalink associated with the file. Cannot open URL.");
                 else
-                    OpenUrl(report.Permalink, $"Results: {report.Positives}/{report.Total} positive hits.\nLast scanned: {report.ScanDate:dd MMM yyyy} ({(DateTime.Now - report.ScanDate).Days} days ago).\nOpen in browser?");
+                {
+                    if (string.IsNullOrEmpty(report.Permalink))
+                        WriteError("No permalink associated with the file. Cannot open URL.");
+                    else
+                        OpenUrl(report.Permalink, $"Results: {report.Positives}/{report.Total} positive hits.\nLast scanned: {report.ScanDate:dd MMM yyyy} ({(DateTime.Now - report.ScanDate).Days} days ago).\nOpen in browser?");
+                }
             }
         }
     }
